@@ -78,6 +78,8 @@ def whatsapp_incoming():
             media_url=media_url
         )
 
+        logger.info(f"n8n response for WhatsApp: {json.dumps(ai_result, ensure_ascii=False)[:200]}")
+
         resp = MessagingResponse()
         msg = resp.message(ai_result.get("reply", ""))
         media = ai_result.get("media")
@@ -143,7 +145,11 @@ def manychat_incoming():
             channel="instagram"
         )
 
+        logger.info(f"n8n response for Instagram: {json.dumps(ai_result, ensure_ascii=False)[:500]}")
+
         reply_text = ai_result.get("reply", "Bir sorun olustu, lutfen tekrar deneyin.")
+
+        logger.info(f"Instagram reply to send: {reply_text[:100]}...")
 
         return jsonify({
             "version": "v2",
