@@ -1,11 +1,13 @@
 """
 Freya Yachting — Flask Router
 WhatsApp (Twilio) + Instagram DM (ManyChat) → n8n AI Webhook
+Async Instagram: Returns immediately to ManyChat, sends reply via ManyChat API
 """
 
 import os
 import json
 import logging
+import threading
 from flask import Flask, request, jsonify
 from twilio.twiml.messaging_response import MessagingResponse
 import requests
@@ -40,6 +42,56 @@ def send_to_n8n(from_id, name, message, channel, media_url=None):
     except Exception as e:
         logger.error(f"n8n webhook error: {e}")
         return {"reply": "Bir sorun olustu, lutfen tekrar deneyin veya bizi arayin."}
+
+
+def send_instagram_reply_async(subscriber_id, name, message):
+    """Background thread: n8n'den cevap al, ManyChat API ile gonder"""
+    try:
+        ai_result = send_to_n8n(
+            from_id=subscriber_id,
+            name=name,
+            message=message,
+            channel="instagram"
+        )
+
+        logger.info(f"n8n response for Instagram: {json.dumps(ai_result, ensure_ascii=False)[:500]}")
+
+        reply_text = ai_result.get("reply", "Bir sorun olustu, lutfen tekrar deneyin.")
+
+        if len(reply_text) > 1000:
+            reply_text = reply_text[:997] + "..."
+
+        logger.info(f"Sending Instagram reply via ManyChat API ({len(reply_text)} chars)")
+
+        # ManyChat API ile mesaj gonder
+        manychat_response = requests.post(
+            "https://api.manychat.com/fb/sending/sendContent",
+            headers={
+                "Authorization": f"Bearer {MANYCHAT_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "subscriber_id": int(subscriber_id),
+                "data": {
+                    "version": "v2",
+                    "content": {
+                        "type": "instagram",
+                        "messages": [
+                            {
+                                "type": "text",
+                                "text": reply_text
+                            }
+                        ]
+                    }
+                }
+            },
+            timeout=30
+        )
+
+        logger.info(f"ManyChat API response: {manychat_response.status_code} - {manychat_response.text[:200]}")
+
+    except Exception as e:
+        logger.error(f"Instagram async reply error: {e}")
 
 
 @app.route("/", methods=["GET"])
@@ -128,55 +180,23 @@ def manychat_incoming():
             message = data["text"]
 
         if not message:
-            return jsonify({
-                "version": "v2",
-                "content": {
-                    "type": "instagram",
-                    "messages": [{"type": "text", "text": "Merhaba! Size nasil yardimci olabilirim?"}]
-                }
-            })
+            return jsonify({"status": "no_message"}), 200
 
         logger.info(f"Instagram DM: {subscriber_id} ({name}) - {message[:50]}...")
 
-        ai_result = send_to_n8n(
-            from_id=subscriber_id,
-            name=name,
-            message=message,
-            channel="instagram"
+        # Background thread'de n8n'e gonder ve ManyChat API ile yanit gonder
+        thread = threading.Thread(
+            target=send_instagram_reply_async,
+            args=(subscriber_id, name, message)
         )
+        thread.start()
 
-        logger.info(f"n8n response for Instagram: {json.dumps(ai_result, ensure_ascii=False)[:500]}")
-
-        reply_text = ai_result.get("reply", "Bir sorun olustu, lutfen tekrar deneyin.")
-
-        # Mesaj uzunlugunu sinirla
-        if len(reply_text) > 1000:
-            reply_text = reply_text[:997] + "..."
-
-        logger.info(f"Instagram reply to send ({len(reply_text)} chars): {reply_text[:100]}...")
-
-        return jsonify({
-            "version": "v2",
-            "content": {
-                "type": "instagram",
-                "messages": [
-                    {
-                        "type": "text",
-                        "text": reply_text
-                    }
-                ]
-            }
-        })
+        # ManyChat'e hemen bos response don (timeout olmaz)
+        return jsonify({"status": "processing"}), 200
 
     except Exception as e:
         logger.error(f"ManyChat error: {e}")
-        return jsonify({
-            "version": "v2",
-            "content": {
-                "type": "instagram",
-                "messages": [{"type": "text", "text": "Bir sorun olustu, lutfen tekrar deneyin."}]
-            }
-        }), 200
+        return jsonify({"status": "error"}), 200
 
 
 if __name__ == "__main__":
