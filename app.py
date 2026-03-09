@@ -149,7 +149,11 @@ def manychat_incoming():
 
         reply_text = ai_result.get("reply", "Bir sorun olustu, lutfen tekrar deneyin.")
 
-        logger.info(f"Instagram reply to send: {reply_text[:100]}...")
+        # Mesaj uzunlugunu sinirla
+        if len(reply_text) > 1000:
+            reply_text = reply_text[:997] + "..."
+
+        logger.info(f"Instagram reply to send ({len(reply_text)} chars): {reply_text[:100]}...")
 
         return jsonify({
             "version": "v2",
