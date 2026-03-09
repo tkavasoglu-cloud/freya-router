@@ -30,7 +30,7 @@ def send_to_n8n(from_id, name, message, channel, media_url=None):
                 "message": message,
                 "media_url": media_url
             },
-            timeout=60
+            timeout=120
         )
         response.raise_for_status()
         return response.json()
