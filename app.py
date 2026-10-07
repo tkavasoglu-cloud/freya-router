@@ -59,7 +59,7 @@ def send_instagram_reply_async(subscriber_id, name, message):
             channel="instagram"
         )
 
-        logger.info(f"n8n response for Instagram: {json.dumps(ai_result, ensure_ascii=False)[:500]}")
+        logger.info(f"n8n response for Instagram: cevap {len(ai_result.get('reply') or '')} karakter")
 
         reply_text = ai_result.get("reply", "Bir sorun olustu, lutfen tekrar deneyin.")
 
@@ -234,7 +234,7 @@ def manychat_incoming():
         if not message:
             return jsonify({"status": "no_message"}), 200
 
-        logger.info(f"Instagram DM: {subscriber_id} ({name}) - {message[:50]}...")
+        logger.info(f"Instagram DM: {mask_number(subscriber_id)} ({len(message)} karakter)")
 
         # Background thread'de n8n'e gonder ve ManyChat API ile yanit gonder
         thread = threading.Thread(
