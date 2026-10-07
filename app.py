@@ -163,7 +163,7 @@ def whatsapp_incoming():
             body = "[Gorsel/Dosya gonderildi]"
 
         clean_number = from_number.replace("whatsapp:", "").replace("+", "")
-        logger.info(f"WhatsApp mesaj: {clean_number} - {body[:50]}...")
+        logger.info(f"WhatsApp mesaj: {mask_number(clean_number)} ({len(body)} karakter)")
 
         to_number = request.form.get("To", "")
         if twilio_rest_ready() and to_number:
@@ -182,7 +182,7 @@ def whatsapp_incoming():
             media_url=media_url
         )
 
-        logger.info(f"n8n response for WhatsApp: {json.dumps(ai_result, ensure_ascii=False)[:200]}")
+        logger.info(f"n8n response for WhatsApp: cevap {len(ai_result.get('reply') or '')} karakter")
 
         resp = MessagingResponse()
         msg = resp.message(ai_result.get("reply", ""))
