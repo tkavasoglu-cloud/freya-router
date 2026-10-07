@@ -10,12 +10,17 @@ import logging
 import threading
 from flask import Flask, request, jsonify
 from twilio.twiml.messaging_response import MessagingResponse
+from twilio.rest import Client
 import requests
 
 N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL", "https://freyayachting.app.n8n.cloud/webhook/whatsapp-ai")
 MANYCHAT_API_KEY = os.environ.get("MANYCHAT_API_KEY", "")
 ADMIN_PHONE = os.environ.get("ADMIN_PHONE", "+908508402465")
 PORT = int(os.environ.get("PORT", 5000))
+# Twilio REST ile WhatsApp cevabi (API Key). Uc degisken de doluysa kullanilir, yoksa TwiML ile cevap verilir.
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_API_KEY_SID = os.environ.get("TWILIO_API_KEY_SID", "")
+TWILIO_API_KEY_SECRET = os.environ.get("TWILIO_API_KEY_SECRET", "")
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -94,6 +99,44 @@ def send_instagram_reply_async(subscriber_id, name, message):
         logger.error(f"Instagram async reply error: {e}")
 
 
+def mask_number(number):
+    digits = "".join(c for c in str(number) if c.isdigit())
+    return "***" + digits[-4:] if digits else "***"
+
+
+def twilio_rest_ready():
+    return bool(TWILIO_ACCOUNT_SID and TWILIO_API_KEY_SID and TWILIO_API_KEY_SECRET)
+
+
+def send_whatsapp_reply_async(customer, business, clean_number, name, body, media_url):
+    """Background thread: n8n'den cevap al, Twilio REST API ile gonder (Twilio webhook'u 15 sn'de vazgecer)"""
+    who = mask_number(customer)
+    try:
+        ai_result = send_to_n8n(
+            from_id=clean_number,
+            name=name,
+            message=body,
+            channel="whatsapp",
+            media_url=media_url
+        )
+
+        reply = ai_result.get("reply")
+        if not isinstance(reply, str) or not reply.strip():
+            logger.error(f"WhatsApp: n8n bos cevap dondu, mesaj gonderilmedi ({who})")
+            return
+
+        params = {"from_": business, "to": customer, "body": reply}
+        media = ai_result.get("media")
+        if media:
+            params["media_url"] = [media]
+
+        Client(TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, TWILIO_ACCOUNT_SID).messages.create(**params)
+        logger.info(f"WhatsApp cevap gonderildi ({who})")
+
+    except Exception as e:
+        logger.error(f"WhatsApp cevap gonderilemedi ({who}): {type(e).__name__} kod={getattr(e, 'code', '-')} http={getattr(e, 'status', '-')}")
+
+
 @app.route("/", methods=["GET"])
 def health():
     return jsonify({
@@ -121,6 +164,15 @@ def whatsapp_incoming():
 
         clean_number = from_number.replace("whatsapp:", "").replace("+", "")
         logger.info(f"WhatsApp mesaj: {clean_number} - {body[:50]}...")
+
+        to_number = request.form.get("To", "")
+        if twilio_rest_ready() and to_number:
+            # Twilio'ya hemen bos TwiML don, cevabi arka planda REST ile gonder
+            threading.Thread(
+                target=send_whatsapp_reply_async,
+                args=(from_number, to_number, clean_number, profile_name or "WhatsApp Kullanici", body, media_url)
+            ).start()
+            return str(MessagingResponse())
 
         ai_result = send_to_n8n(
             from_id=clean_number,
