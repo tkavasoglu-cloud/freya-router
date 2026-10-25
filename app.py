@@ -14,6 +14,8 @@ from twilio.rest import Client
 import requests
 
 N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL", "https://freyayachting.app.n8n.cloud/webhook/whatsapp-ai")
+# n8n webhook'u Header Auth ile korunur; doluysa her istekte X-Freya-Secret basligiyla gonderilir (bos ise baslik yok)
+N8N_WEBHOOK_SECRET = os.environ.get("N8N_WEBHOOK_SECRET", "")
 MANYCHAT_API_KEY = os.environ.get("MANYCHAT_API_KEY", "")
 ADMIN_PHONE = os.environ.get("ADMIN_PHONE", "+908508402465")
 PORT = int(os.environ.get("PORT", 5000))
@@ -37,6 +39,7 @@ def send_to_n8n(from_id, name, message, channel, media_url=None):
                 "message": message,
                 "media_url": media_url
             },
+            headers={"X-Freya-Secret": N8N_WEBHOOK_SECRET} if N8N_WEBHOOK_SECRET else None,
             timeout=120
         )
         response.raise_for_status()
