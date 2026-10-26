@@ -5,11 +5,13 @@ Async Instagram: Returns immediately to ManyChat, sends reply via ManyChat API
 """
 
 import os
+import hmac
 import logging
 import threading
 from flask import Flask, request, jsonify
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.rest import Client
+from twilio.request_validator import RequestValidator
 import requests
 
 N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL", "https://freyayachting.app.n8n.cloud/webhook/whatsapp-ai")
@@ -22,6 +24,14 @@ PORT = int(os.environ.get("PORT", 5000))
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
 TWILIO_API_KEY_SID = os.environ.get("TWILIO_API_KEY_SID", "")
 TWILIO_API_KEY_SECRET = os.environ.get("TWILIO_API_KEY_SECRET", "")
+# Gelen uclarin dogrulamasi. TWILIO_AUTH_TOKEN doluysa /whatsapp/incoming icin X-Twilio-Signature, MANYCHAT_WEBHOOK_SECRET doluysa
+# /manychat/instagram icin X-Freya-Secret basligi denetlenir (bossa o uc denetlenmez). TWILIO_WEBHOOK_URL: Twilio'da yazili adresin tam hali
+# (bos ise X-Forwarded-Proto + Host'tan kurulur). GIRIS_DOGRULAMA=zorunlu tutmayan istegi 403 ile reddeder; baska her deger kayit modudur:
+# tutmazsa yalniz gunluge yazilir, istek yine islenir.
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+TWILIO_WEBHOOK_URL = os.environ.get("TWILIO_WEBHOOK_URL", "")
+MANYCHAT_WEBHOOK_SECRET = os.environ.get("MANYCHAT_WEBHOOK_SECRET", "")
+GIRIS_DOGRULAMA = os.environ.get("GIRIS_DOGRULAMA", "kayit")
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -146,6 +156,46 @@ def send_whatsapp_reply_async(customer, business, clean_number, name, body, medi
         logger.error(f"WhatsApp cevap gonderilemedi ({who}): {type(e).__name__} kod={getattr(e, 'code', '-')} http={getattr(e, 'status', '-')}")
 
 
+def twilio_imzasi():
+    """-> (sonuc, ayrinti): sonuc 'kapali' | 'gecerli' | 'gecersiz' | 'yok'. Imza ya da jeton gunluge yazilmaz."""
+    if not TWILIO_AUTH_TOKEN:
+        return "kapali", "TWILIO_AUTH_TOKEN yok"
+    imza = request.headers.get("X-Twilio-Signature", "")
+    if TWILIO_WEBHOOK_URL:
+        url, kaynak = TWILIO_WEBHOOK_URL, "TWILIO_WEBHOOK_URL"
+    else:
+        proto = request.headers.get("X-Forwarded-Proto", request.scheme).split(",")[0].strip()
+        host = request.headers.get("X-Forwarded-Host", request.host).split(",")[0].strip()
+        url = f"{proto}://{host}{request.path}" + (f"?{request.query_string.decode()}" if request.query_string else "")
+        kaynak = "basliklar"
+    if not imza:
+        return "yok", f"url kaynagi {kaynak}"
+    gecerli = RequestValidator(TWILIO_AUTH_TOKEN).validate(url, request.form.to_dict(), imza)
+    return ("gecerli" if gecerli else "gecersiz"), f"url kaynagi {kaynak}, adres {url}"
+
+
+def manychat_sirri():
+    """-> (sonuc, ayrinti): 'kapali' | 'gecerli' | 'gecersiz' | 'yok'. Deger gunluge yazilmaz (yalniz uzunluk)."""
+    if not MANYCHAT_WEBHOOK_SECRET:
+        return "kapali", "MANYCHAT_WEBHOOK_SECRET yok"
+    gelen = request.headers.get("X-Freya-Secret", "")
+    if not gelen:
+        return "yok", "X-Freya-Secret basligi yok"
+    return ("gecerli" if hmac.compare_digest(gelen, MANYCHAT_WEBHOOK_SECRET) else "gecersiz"), f"gelen uzunluk {len(gelen)}"
+
+
+def giris_reddedilsin_mi(uc, sonuc, ayrinti):
+    """Sonucu gunluge yazar; zorunlu modda tutmayan istek icin True doner (cagiran 403 verir)."""
+    if sonuc in ("kapali", "gecerli"):
+        logger.info(f"{uc} dogrulama: {sonuc}")
+        return False
+    if GIRIS_DOGRULAMA == "zorunlu":
+        logger.warning(f"{uc} dogrulama: {sonuc} ({ayrinti}) - REDDEDILDI")
+        return True
+    logger.warning(f"{uc} dogrulama: {sonuc} ({ayrinti}) - KAYIT MODU, istek yine islendi")
+    return False
+
+
 @app.route("/", methods=["GET"])
 def health():
     return jsonify({
@@ -157,6 +207,8 @@ def health():
 
 @app.route("/whatsapp/incoming", methods=["POST"])
 def whatsapp_incoming():
+    if giris_reddedilsin_mi("WhatsApp", *twilio_imzasi()):
+        return "", 403
     try:
         from_number = request.form.get("From", "")
         body = request.form.get("Body", "")
@@ -209,6 +261,8 @@ def whatsapp_incoming():
 
 @app.route("/manychat/instagram", methods=["POST"])
 def manychat_incoming():
+    if giris_reddedilsin_mi("ManyChat", *manychat_sirri()):
+        return jsonify({"status": "forbidden"}), 403
     try:
         data = request.json
         # Musteri verisi (ad, kimlik, mesaj) gunluge yazilmaz: yalniz gelen alan adlari
