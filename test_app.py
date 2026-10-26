@@ -147,5 +147,40 @@ class ManychatSirri(unittest.TestCase):
         self.assertNotIn(self.SIR, kayit); self.assertNotIn("yanlis-deger-123", kayit)
 
 
+TR = "Merhaba! Çeşme'de güneşli bir gün: ığüşöç İĞÜŞÖÇ, fiyat 1.250 € 🙂"
+
+
+class TurkceKarakter(unittest.TestCase):
+    """n8n cevabi Turkce karakterleriyle bozulmadan musteriye gider (ham UTF-8 bayttan Twilio / ManyChat govdesine kadar)."""
+
+    def n8n_yaniti(self, icerik_turu):
+        import json
+        import requests
+        r = requests.Response()
+        r.status_code = 200
+        r._content = json.dumps({"reply": TR}, ensure_ascii=False).encode("utf-8")
+        if icerik_turu:
+            r.headers["Content-Type"] = icerik_turu
+        return r
+
+    def test_n8n_utf8_cevabi_her_icerik_turunde_dogru_cozulur(self):
+        app = yukle("")
+        for tur in ("application/json; charset=utf-8", "application/json", "text/plain", "text/html", None):
+            with self.subTest(tur=tur), mock.patch.object(app.requests, "post", return_value=self.n8n_yaniti(tur)):
+                self.assertEqual(app.send_to_n8n("905000000000", "Ad", "merhaba", "whatsapp")["reply"], TR)
+
+    def test_whatsapp_twilio_govdesi_aynen(self):
+        app = yukle("")
+        with mock.patch.object(app, "send_to_n8n", return_value={"reply": TR}), mock.patch.object(app, "Client") as istemci:
+            app.send_whatsapp_reply_async("whatsapp:+905000000000", "whatsapp:+908500000000", "905000000000", "Ad", "merhaba", None)
+        self.assertEqual(istemci.return_value.messages.create.call_args.kwargs["body"], TR)
+
+    def test_instagram_manychat_govdesi_aynen(self):
+        app = yukle("")
+        with mock.patch.object(app, "send_to_n8n", return_value={"reply": TR}), mock.patch.object(app.requests, "post") as post:
+            app.send_instagram_reply_async("1234567890", "Ad", "merhaba")
+        self.assertEqual(post.call_args.kwargs["json"]["data"]["content"]["messages"][0]["text"], TR)
+
+
 if __name__ == "__main__":
     unittest.main()
