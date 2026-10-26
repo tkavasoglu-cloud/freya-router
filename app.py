@@ -5,7 +5,6 @@ Async Instagram: Returns immediately to ManyChat, sends reply via ManyChat API
 """
 
 import os
-import json
 import logging
 import threading
 from flask import Flask, request, jsonify
@@ -64,7 +63,14 @@ def send_instagram_reply_async(subscriber_id, name, message):
 
         logger.info(f"n8n response for Instagram: cevap {len(ai_result.get('reply') or '')} karakter")
 
-        reply_text = ai_result.get("reply", "Bir sorun olustu, lutfen tekrar deneyin.")
+        reply_text = ai_result.get("reply")
+        if not reply_text:
+            # n8n bilerek susar ({"reply": null, "ignored": true}: Arkadas isaretli kisi); aksi halde beklenmeyen bos cevap. Ikisinde de mesaj gonderilmez.
+            if ai_result.get("ignored"):
+                logger.info(f"Instagram: n8n sessiz kaldi (ignored), mesaj gonderilmedi ({mask_number(subscriber_id)})")
+            else:
+                logger.error(f"Instagram: n8n bos cevap dondu, mesaj gonderilmedi ({mask_number(subscriber_id)})")
+            return
 
         if len(reply_text) > 1000:
             reply_text = reply_text[:997] + "..."
@@ -96,7 +102,7 @@ def send_instagram_reply_async(subscriber_id, name, message):
             timeout=30
         )
 
-        logger.info(f"ManyChat API response: {manychat_response.status_code} - {manychat_response.text[:200]}")
+        logger.info(f"ManyChat API response: {manychat_response.status_code} ({len(manychat_response.text)} karakter)")
 
     except Exception as e:
         logger.error(f"Instagram async reply error: {e}")
@@ -205,7 +211,8 @@ def whatsapp_incoming():
 def manychat_incoming():
     try:
         data = request.json
-        logger.info(f"ManyChat data: {json.dumps(data, ensure_ascii=False)[:500]}")
+        # Musteri verisi (ad, kimlik, mesaj) gunluge yazilmaz: yalniz gelen alan adlari
+        logger.info(f"ManyChat veri alanlari: {sorted(data.keys()) if isinstance(data, dict) else type(data).__name__}")
 
         subscriber_id = ""
         name = "Instagram Kullanici"
