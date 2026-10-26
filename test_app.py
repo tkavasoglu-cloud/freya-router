@@ -18,7 +18,7 @@ class SendToN8n(unittest.TestCase):
     def gonder(self, sir):
         app = yukle(sir)
         with mock.patch.object(app.requests, "post") as post:
-            post.return_value.json.return_value = {"reply": "ok"}
+            post.return_value.content = b'{"reply": "ok"}'
             self.assertEqual(app.send_to_n8n("905000000000", "Ad", "merhaba", "whatsapp"), {"reply": "ok"})
             return post.call_args.kwargs
 
@@ -161,6 +161,7 @@ class TurkceKarakter(unittest.TestCase):
         r._content = json.dumps({"reply": TR}, ensure_ascii=False).encode("utf-8")
         if icerik_turu:
             r.headers["Content-Type"] = icerik_turu
+        r.encoding = requests.utils.get_encoding_from_headers(r.headers)  # gercek requests yaniti gibi (adapters.build_response)
         return r
 
     def test_n8n_utf8_cevabi_her_icerik_turunde_dogru_cozulur(self):

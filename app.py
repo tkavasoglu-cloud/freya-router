@@ -6,6 +6,7 @@ Async Instagram: Returns immediately to ManyChat, sends reply via ManyChat API
 
 import os
 import hmac
+import json
 import logging
 import threading
 from flask import Flask, request, jsonify
@@ -52,7 +53,8 @@ def send_to_n8n(from_id, name, message, channel, media_url=None):
             timeout=120
         )
         response.raise_for_status()
-        return response.json()
+        # Her zaman UTF-8: charset'siz text/* yanitinda requests latin-1 varsayar, Turkce harfler bozulur
+        return json.loads(response.content.decode("utf-8"))
     except requests.exceptions.Timeout:
         logger.error("n8n webhook timeout")
         return {"reply": "Su anda yogunluk yasiyoruz, lutfen biraz sonra tekrar yazin."}
